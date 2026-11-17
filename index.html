@@ -103,7 +103,39 @@ const LANGS = [
   ["Bengali","ben","bn"],["Thai","tha","th"],["Chinese (Simplified)","chi_sim","zh-CN"],
   ["Chinese (Traditional)","chi_tra","zh-TW"],["Japanese","jpn","ja"],["Korean","kor","ko"]
 ];
-const AUTO_OCR = "eng+spa+fra+deu+ita+por";   // Latin-script auto mode
+// Auto mode: script -> OCR language pack(s) and the translation source language
+const GROUPS = {
+  latin:     {ocr:"eng+spa+fra+deu+ita+por", from:"auto"},
+  latinMore: {ocr:"nld+pol+tur+ind+vie+ces+ron+swe+fin+hun", from:"auto"},
+  cyrillic:  {ocr:"rus+ukr+bul", from:"auto"},
+  arabic:    {ocr:"ara+fas+urd", from:"auto"},
+  han:       {ocr:"chi_sim+chi_tra", from:"auto"},
+  japanese:  {ocr:"jpn", from:"ja"},
+  korean:    {ocr:"kor", from:"ko"},
+  devanagari:{ocr:"hin", from:"hi"},
+  thai:      {ocr:"tha", from:"th"},
+  greek:     {ocr:"ell", from:"el"},
+  hebrew:    {ocr:"heb", from:"he"},
+  bengali:   {ocr:"ben", from:"bn"},
+  tamil:     {ocr:"tam", from:"ta"},
+  telugu:    {ocr:"tel", from:"te"},
+  gujarati:  {ocr:"guj", from:"gu"},
+  gurmukhi:  {ocr:"pan", from:"pa"},
+  kannada:   {ocr:"kan", from:"kn"},
+  malayalam: {ocr:"mal", from:"ml"},
+  khmer:     {ocr:"khm", from:"km"},
+  lao:       {ocr:"lao", from:"lo"},
+  myanmar:   {ocr:"mya", from:"my"},
+  georgian:  {ocr:"kat", from:"ka"},
+  armenian:  {ocr:"hye", from:"hy"},
+  ethiopic:  {ocr:"amh", from:"am"}
+};
+const SCRIPT_TO_GROUP = {Latin:"latin",Vietnamese:"latin",Fraktur:"latin",Cyrillic:"cyrillic",Arabic:"arabic",Han:"han",
+  Japanese:"japanese",Korean:"korean",Hangul:"korean",Devanagari:"devanagari",Thai:"thai",Greek:"greek",Hebrew:"hebrew",
+  Bengali:"bengali",Tamil:"tamil",Telugu:"telugu",Gujarati:"gujarati",Gurmukhi:"gurmukhi",Kannada:"kannada",
+  Malayalam:"malayalam",Khmer:"khmer",Lao:"lao",Myanmar:"myanmar",Georgian:"georgian",Armenian:"armenian",Ethiopic:"ethiopic"};
+// Fallback order when the script can't be detected (e.g. very short text)
+const TRY_ORDER = ["latin","cyrillic","arabic","han","japanese","korean","devanagari","thai","greek","hebrew","bengali","latinMore"];
 
 const $ = id => document.getElementById(id);
 const video=$("video"), result=$("result"), srcSel=$("src"), dstSel=$("dst");
@@ -112,7 +144,7 @@ const workers = {};
 const cache = {};
 
 // ---------- language pickers ----------
-srcSel.innerHTML = `<option value="auto">Auto (Latin scripts)</option>` +
+srcSel.innerHTML = `<option value="auto">Auto-detect language</option>` +
   LANGS.map((l,i)=>`<option value="${i}">${l[0]}</option>`).join("");
 dstSel.innerHTML = LANGS.map((l,i)=>`<option value="${i}">${l[0]}</option>`).join("");
 
@@ -188,6 +220,45 @@ async function getWorker(code){
   return workers[code];
 }
 
+let osdWorker=null;
+function meanConf(data){
+  const w=(data.words||[]).filter(x=>x.text.trim().length>0);
+  if(!w.length) return 0;
+  return w.reduce((a,x)=>a+x.confidence,0)/w.length;
+}
+async function detectScript(canvas){
+  try{
+    osdWorker = osdWorker || await Tesseract.createWorker("osd",0,{legacyCore:true,legacyLang:true});
+    const r = await osdWorker.detect(canvas);
+    return SCRIPT_TO_GROUP[r.data.script] || null;
+  }catch(e){ console.warn("script detection failed",e); return null; }
+}
+async function recognizeGroup(key, canvas){
+  const w = await getWorker(GROUPS[key].ocr);
+  const {data} = await w.recognize(canvas);
+  return {key, data, conf: meanConf(data)};
+}
+async function autoRecognize(canvas){
+  status("Detecting language…");
+  const tried = new Set();
+  let best = null;
+  const attempt = async key=>{
+    tried.add(key);
+    const r = await recognizeGroup(key, canvas);
+    if(!best || r.conf>best.conf) best=r;
+    return r;
+  };
+  const first = await detectScript(canvas);
+  if(first){ const r=await attempt(first); if(r.conf>=55) return best; }
+  for(const key of TRY_ORDER){
+    if(tried.has(key)) continue;
+    status("Trying "+key.replace("latinMore","more Latin languages")+"…");
+    const r = await attempt(key);
+    if(r.conf>=75) break;
+  }
+  return best;
+}
+
 // ---------- translation (MyMemory free API) ----------
 async function translate(text, from, to){
   const key = from+"|"+to+"|"+text;
@@ -210,21 +281,26 @@ async function pool(items, n, fn){
 async function process(canvas){
   busy=true; $("shutter").disabled=true;
   const sIdx = srcSel.value, d = LANGS[+dstSel.value];
-  const ocrCode = sIdx==="auto"?AUTO_OCR:LANGS[+sIdx][1];
-  const from = sIdx==="auto"?"auto":LANGS[+sIdx][2];
+  let from = sIdx==="auto"?"auto":LANGS[+sIdx][2];
 
   showResult(canvas);
   try{
-    status("Loading language data…");
-    const w = await getWorker(ocrCode);
-    const { data } = await w.recognize(canvas);
-    const lines = (data.lines||[]).filter(l=>l.text.trim().length>1 && l.confidence>35);
+    let data;
+    if(sIdx==="auto"){
+      const r = await autoRecognize(canvas);
+      data = r.data; from = GROUPS[r.key].from;
+    } else {
+      status("Loading language data…");
+      const w = await getWorker(LANGS[+sIdx][1]);
+      ({ data } = await w.recognize(canvas));
+    }
+    const lines = (data.lines||[]).filter(l=>l.text.trim().length>1 && l.confidence>22);
     if(!lines.length){ status("No text found. Try getting closer or choosing the right language.",false); setTimeout(()=>status(),3000); reset(false); return; }
 
     status("Translating…");
     let failed=false;
     const tr = await pool(lines, 4, async l=>{
-      const src=l.text.replace(/\s+/g," ").trim();
+      const src=l.text.replace(/\s+/g," ").replace(/(?<=[\u3040-\u30ff\u3400-\u9fff\uac00-\ud7af]) (?=[\u3040-\u30ff\u3400-\u9fff\uac00-\ud7af])/g,"").trim();
       if(from!=="auto" && from===d[2]) return src;
       try{ return await translate(src, from, d[2]); }catch(e){ failed=e.message; return src; }
     });

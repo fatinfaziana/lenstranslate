@@ -6,10 +6,10 @@ Translate anything with your phone camera. It's a website, so there's no app to 
 
 ## How it works
 1. Open the link and allow the camera.
-2. Pick the language of the text and the language to translate into.
+2. Leave the first box on **Auto-detect language** (it works out the script and language itself) and pick the language to translate into. You can also choose the source language manually.
 3. Tap the shutter. The text is read on your device (Tesseract.js) and the translation is drawn over the photo.
 
-You can also pick a photo from your gallery. 22 languages are supported, including Arabic, Chinese, Japanese, Korean, Hindi and Thai.
+You can also pick a photo from your gallery. Auto-detect covers Latin, Cyrillic, Arabic, Chinese, Japanese, Korean, Devanagari, Thai, Greek, Hebrew and many more scripts. Translation targets 22 languages.
 
 ## Privacy
 The photo never leaves your phone. Only the recognised text is sent to the free MyMemory translation API.
@@ -17,7 +17,7 @@ The photo never leaves your phone. Only the recognised text is sent to the free 
 ## Limits
 - Free MyMemory translation has a daily character limit for anonymous use.
 - It translates a captured photo, not live video.
-- Non-Latin scripts need the correct source language picked ("Auto" covers Latin scripts only).
+- Auto-detect downloads a language pack the first time a script is seen (a few MB, then cached) and can take longer on very short text. Pick the language manually if it guesses wrong.
 
 ## Run locally
 It's a single static file, `index.html`. The camera needs https or localhost:
