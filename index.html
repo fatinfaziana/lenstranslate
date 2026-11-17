@@ -4,22 +4,30 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#000000">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<link rel="manifest" href="manifest.json">
 <title>LensTranslate – Translate with your camera</title>
 <style>
-  :root { --bg:#000; --fg:#fff; --muted:#a8adb7; --accent:#4ade80; --panel:rgba(18,20,26,.92); }
+  :root { --bg:#000; --fg:#fff; --muted:#a8adb7; --accent:#4ade80; --panel:rgba(18,20,26,.96); --top:76px; }
   * { box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
   html,body { margin:0; height:100%; background:var(--bg); color:var(--fg);
     font:16px/1.4 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif; overflow:hidden; }
   #stage { position:fixed; inset:0; display:flex; align-items:center; justify-content:center; }
-  video, #result { width:100%; height:100%; object-fit:contain; background:#000; }
-  #result { display:none; }
+  video { width:100%; height:100%; object-fit:cover; background:#000; }
+  #result { display:none; width:100%; background:#000; object-fit:contain; }
+  body.showing #stage { align-items:flex-start; }
+  body.showing #result { display:block; margin-top:calc(var(--top) + env(safe-area-inset-top));
+    height:calc(100% - var(--top) - env(safe-area-inset-top) - 46vh); }
+  body.showing.working #result { height:calc(100% - var(--top) - env(safe-area-inset-top)); }
   .top { position:fixed; top:0; left:0; right:0; padding:calc(env(safe-area-inset-top) + 10px) 12px 10px;
-    display:flex; gap:8px; align-items:center; background:linear-gradient(#000c,#0000); z-index:5; }
+    display:flex; gap:8px; align-items:center; background:linear-gradient(#000e,#0000); z-index:5; }
   .top label { flex:1; min-width:0; font-size:11px; color:var(--muted); display:flex; flex-direction:column; gap:2px; }
   select { width:100%; background:#1b1e26; color:var(--fg); border:1px solid #333948; border-radius:10px;
     padding:9px 8px; font-size:15px; }
   .swap { flex:none; width:36px; height:36px; border-radius:50%; border:1px solid #333948; background:#1b1e26;
     color:var(--fg); font-size:18px; margin-top:14px; }
+  .hint { position:fixed; left:0; right:0; bottom:calc(env(safe-area-inset-bottom) + 118px); text-align:center;
+    z-index:4; font-size:13px; color:#fffd; text-shadow:0 1px 3px #000; pointer-events:none; }
   .bottom { position:fixed; left:0; right:0; bottom:0; z-index:5;
     padding:14px 20px calc(env(safe-area-inset-bottom) + 18px);
     display:flex; align-items:center; justify-content:space-between; background:linear-gradient(#0000,#000d); }
@@ -29,17 +37,22 @@
   #shutter::after { content:""; position:absolute; inset:6px; border-radius:50%; background:#fff; transition:transform .1s; }
   #shutter:active::after { transform:scale(.88); }
   #shutter:disabled { opacity:.4; }
-  #status { position:fixed; left:50%; top:40%; transform:translateX(-50%); z-index:6; background:var(--panel);
+  #status { position:fixed; left:50%; top:42%; transform:translateX(-50%); z-index:9; background:var(--panel);
     padding:12px 18px; border-radius:14px; display:none; text-align:center; max-width:86%; }
   .spin { display:inline-block; width:14px; height:14px; border:2px solid #fff4; border-top-color:var(--accent);
     border-radius:50%; animation:r .8s linear infinite; vertical-align:-2px; margin-right:8px; }
   @keyframes r { to { transform:rotate(360deg);} }
-  #sheet { position:fixed; left:0; right:0; bottom:0; z-index:7; max-height:46vh; overflow:auto; display:none;
-    background:var(--panel); border-radius:20px 20px 0 0; padding:16px 18px calc(env(safe-area-inset-bottom) + 16px);
-    backdrop-filter:blur(10px); -webkit-backdrop-filter:blur(10px); }
-  #sheet h3 { margin:0 0 8px; font-size:12px; letter-spacing:.06em; text-transform:uppercase; color:var(--muted); }
-  #text { white-space:pre-wrap; font-size:18px; }
-  .row { display:flex; gap:10px; margin-top:14px; }
+  #sheet { position:fixed; left:0; right:0; bottom:0; z-index:7; height:46vh; overflow:auto; display:none;
+    background:var(--panel); border-radius:20px 20px 0 0; padding:16px 18px calc(env(safe-area-inset-bottom) + 84px); }
+  #sheet h3 { margin:0 0 10px; font-size:12px; letter-spacing:.06em; text-transform:uppercase; color:var(--muted); }
+  .item { padding:10px 0; border-top:1px solid #ffffff14; display:flex; gap:10px; }
+  .item:first-of-type { border-top:0; }
+  .num { flex:none; width:22px; height:22px; border-radius:50%; background:var(--accent); color:#04210f;
+    font-size:12px; font-weight:700; display:flex; align-items:center; justify-content:center; margin-top:2px; }
+  .tr { font-size:18px; }
+  .orig { font-size:13px; color:var(--muted); margin-top:2px; }
+  .sheetbar { position:fixed; left:0; right:0; bottom:0; z-index:8; display:none; gap:10px;
+    padding:10px 18px calc(env(safe-area-inset-bottom) + 14px); background:var(--panel); border-top:1px solid #ffffff14; }
   .btn { flex:1; padding:12px; border-radius:12px; border:0; font-size:16px; font-weight:600; cursor:pointer; }
   .primary { background:var(--accent); color:#04210f; }
   .ghost { background:#272b36; color:var(--fg); }
@@ -65,15 +78,16 @@
   </label>
 </div>
 
+<div class="hint" id="hint">Fill the frame with the text, hold steady, then tap the button</div>
 <div id="status"></div>
 
 <div id="sheet">
-  <h3>Translation</h3>
-  <div id="text"></div>
-  <div class="row">
-    <button class="btn ghost" id="copy">Copy</button>
-    <button class="btn primary" id="again">Scan again</button>
-  </div>
+  <h3>Translation · tap the photo to see the original</h3>
+  <div id="list"></div>
+</div>
+<div class="sheetbar" id="sheetbar">
+  <button class="btn ghost" id="copy">Copy</button>
+  <button class="btn primary" id="again">Scan again</button>
 </div>
 
 <div class="bottom" id="controls">
@@ -85,7 +99,7 @@
 <div id="perm">
   <div style="font-size:48px">📷</div>
   <h2 style="margin:0">Camera needed</h2>
-  <p id="permMsg">Allow camera access to translate what you see. Nothing is uploaded except the text to translate.</p>
+  <p id="permMsg">Allow camera access to translate what you see. The photo stays on your phone; only the recognised text is sent for translation.</p>
   <button class="btn primary" id="retry" style="flex:none;width:220px">Enable camera</button>
   <label class="btn ghost" style="flex:none;width:220px;text-align:center">Use a photo instead
     <input type="file" id="file2" accept="image/*" capture="environment">
@@ -94,84 +108,111 @@
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/tesseract.js/5.1.1/tesseract.min.js"></script>
 <script>
-// name, tesseract code, translate code
+// ---------------------------------------------------------------- languages
+// [name, tesseract pack, translation code]
 const LANGS = [
-  ["English","eng","en"],["Spanish","spa","es"],["French","fra","fr"],["German","deu","de"],
-  ["Italian","ita","it"],["Portuguese","por","pt"],["Dutch","nld","nl"],["Polish","pol","pl"],
-  ["Turkish","tur","tr"],["Indonesian","ind","id"],["Malay","msa","ms"],["Vietnamese","vie","vi"],
-  ["Russian","rus","ru"],["Ukrainian","ukr","uk"],["Arabic","ara","ar"],["Hindi","hin","hi"],
-  ["Bengali","ben","bn"],["Thai","tha","th"],["Chinese (Simplified)","chi_sim","zh-CN"],
-  ["Chinese (Traditional)","chi_tra","zh-TW"],["Japanese","jpn","ja"],["Korean","kor","ko"]
+ ["Afrikaans","afr","af"],["Albanian","sqi","sq"],["Amharic","amh","am"],["Arabic","ara","ar"],["Armenian","hye","hy"],
+ ["Assamese","asm","as"],["Azerbaijani","aze","az"],["Basque","eus","eu"],["Belarusian","bel","be"],["Bengali","ben","bn"],
+ ["Bosnian","bos","bs"],["Bulgarian","bul","bg"],["Burmese","mya","my"],["Catalan","cat","ca"],["Cebuano","ceb","ceb"],
+ ["Chinese (Simplified)","chi_sim","zh-CN"],["Chinese (Traditional)","chi_tra","zh-TW"],["Croatian","hrv","hr"],
+ ["Czech","ces","cs"],["Danish","dan","da"],["Dutch","nld","nl"],["English","eng","en"],["Esperanto","epo","eo"],
+ ["Estonian","est","et"],["Filipino","fil","tl"],["Finnish","fin","fi"],["French","fra","fr"],["Galician","glg","gl"],
+ ["Georgian","kat","ka"],["German","deu","de"],["Greek","ell","el"],["Gujarati","guj","gu"],["Haitian Creole","hat","ht"],
+ ["Hebrew","heb","he"],["Hindi","hin","hi"],["Hungarian","hun","hu"],["Icelandic","isl","is"],["Indonesian","ind","id"],
+ ["Irish","gle","ga"],["Italian","ita","it"],["Japanese","jpn","ja"],["Javanese","jav","jv"],["Kannada","kan","kn"],
+ ["Kazakh","kaz","kk"],["Khmer","khm","km"],["Korean","kor","ko"],["Kyrgyz","kir","ky"],["Lao","lao","lo"],
+ ["Latin","lat","la"],["Latvian","lav","lv"],["Lithuanian","lit","lt"],["Luxembourgish","ltz","lb"],["Macedonian","mkd","mk"],
+ ["Malay","msa","ms"],["Malayalam","mal","ml"],["Maltese","mlt","mt"],["Marathi","mar","mr"],["Mongolian","mon","mn"],
+ ["Nepali","nep","ne"],["Norwegian","nor","no"],["Odia","ori","or"],["Pashto","pus","ps"],["Persian","fas","fa"],
+ ["Polish","pol","pl"],["Portuguese","por","pt"],["Punjabi","pan","pa"],["Romanian","ron","ro"],["Russian","rus","ru"],
+ ["Scottish Gaelic","gla","gd"],["Serbian","srp","sr"],["Sindhi","snd","sd"],["Sinhala","sin","si"],["Slovak","slk","sk"],
+ ["Slovenian","slv","sl"],["Spanish","spa","es"],["Sundanese","sun","su"],["Swahili","swa","sw"],["Swedish","swe","sv"],
+ ["Tajik","tgk","tg"],["Tamil","tam","ta"],["Tatar","tat","tt"],["Telugu","tel","te"],["Thai","tha","th"],
+ ["Tigrinya","tir","ti"],["Turkish","tur","tr"],["Ukrainian","ukr","uk"],["Urdu","urd","ur"],["Uyghur","uig","ug"],
+ ["Uzbek","uzb","uz"],["Vietnamese","vie","vi"],["Welsh","cym","cy"],["Yiddish","yid","yi"],["Yoruba","yor","yo"]
 ];
-// Auto mode: script -> OCR language pack(s) and the translation source language
-const GROUPS = {
-  latin:     {ocr:"eng+spa+fra+deu+ita+por", from:"auto"},
-  latinMore: {ocr:"nld+pol+tur+ind+vie+ces+ron+swe+fin+hun", from:"auto"},
-  cyrillic:  {ocr:"rus+ukr+bul", from:"auto"},
-  arabic:    {ocr:"ara+fas+urd", from:"auto"},
-  han:       {ocr:"chi_sim+chi_tra", from:"auto"},
-  japanese:  {ocr:"jpn", from:"ja"},
-  korean:    {ocr:"kor", from:"ko"},
-  devanagari:{ocr:"hin", from:"hi"},
-  thai:      {ocr:"tha", from:"th"},
-  greek:     {ocr:"ell", from:"el"},
-  hebrew:    {ocr:"heb", from:"he"},
-  bengali:   {ocr:"ben", from:"bn"},
-  tamil:     {ocr:"tam", from:"ta"},
-  telugu:    {ocr:"tel", from:"te"},
-  gujarati:  {ocr:"guj", from:"gu"},
-  gurmukhi:  {ocr:"pan", from:"pa"},
-  kannada:   {ocr:"kan", from:"kn"},
-  malayalam: {ocr:"mal", from:"ml"},
-  khmer:     {ocr:"khm", from:"km"},
-  lao:       {ocr:"lao", from:"lo"},
-  myanmar:   {ocr:"mya", from:"my"},
-  georgian:  {ocr:"kat", from:"ka"},
-  armenian:  {ocr:"hye", from:"hy"},
-  ethiopic:  {ocr:"amh", from:"am"}
-};
-const SCRIPT_TO_GROUP = {Latin:"latin",Vietnamese:"latin",Fraktur:"latin",Cyrillic:"cyrillic",Arabic:"arabic",Han:"han",
-  Japanese:"japanese",Korean:"korean",Hangul:"korean",Devanagari:"devanagari",Thai:"thai",Greek:"greek",Hebrew:"hebrew",
-  Bengali:"bengali",Tamil:"tamil",Telugu:"telugu",Gujarati:"gujarati",Gurmukhi:"gurmukhi",Kannada:"kannada",
-  Malayalam:"malayalam",Khmer:"khmer",Lao:"lao",Myanmar:"myanmar",Georgian:"georgian",Armenian:"armenian",Ethiopic:"ethiopic"};
-// Fallback order when the script can't be detected (e.g. very short text)
-const TRY_ORDER = ["latin","cyrillic","arabic","han","japanese","korean","devanagari","thai","greek","hebrew","bengali","latinMore"];
+const LANG_PATH = "https://cdn.jsdelivr.net/gh/tesseract-ocr/tessdata_fast@main";
+const RTL = new Set(["ar","fa","he","ur","ps","sd","ug","yi"]);
 
+// Auto-detect: script groups. ocr = language packs used together, from = translation source ("auto" = let the API detect)
+const GROUPS = {
+  latin:      {ocr:"eng+spa+fra+deu+ita+por",              from:"auto",  re:"Latin"},
+  korean:     {ocr:"kor",                                  from:"ko",    re:"Hangul"},
+  japanese:   {ocr:"jpn",                                  from:"ja",    re:"Hiragana|Katakana|Han"},
+  han:        {ocr:"chi_sim+chi_tra",                      from:"zh-CN", re:"Han"},
+  cyrillic:   {ocr:"rus+ukr+bul+srp",                      from:"auto",  re:"Cyrillic"},
+  arabic:     {ocr:"ara+fas+urd",                          from:"auto",  re:"Arabic"},
+  devanagari: {ocr:"hin+mar+nep",                          from:"auto",  re:"Devanagari"},
+  thai:       {ocr:"tha",                                  from:"th",    re:"Thai"},
+  greek:      {ocr:"ell",                                  from:"el",    re:"Greek"},
+  hebrew:     {ocr:"heb+yid",                              from:"auto",  re:"Hebrew"},
+  bengali:    {ocr:"ben+asm",                              from:"auto",  re:"Bengali"},
+  tamil:      {ocr:"tam",                                  from:"ta",    re:"Tamil"},
+  telugu:     {ocr:"tel",                                  from:"te",    re:"Telugu"},
+  kannada:    {ocr:"kan",                                  from:"kn",    re:"Kannada"},
+  malayalam:  {ocr:"mal",                                  from:"ml",    re:"Malayalam"},
+  gujarati:   {ocr:"guj",                                  from:"gu",    re:"Gujarati"},
+  gurmukhi:   {ocr:"pan",                                  from:"pa",    re:"Gurmukhi"},
+  sinhala:    {ocr:"sin",                                  from:"si",    re:"Sinhala"},
+  khmer:      {ocr:"khm",                                  from:"km",    re:"Khmer"},
+  lao:        {ocr:"lao",                                  from:"lo",    re:"Lao"},
+  myanmar:    {ocr:"mya",                                  from:"my",    re:"Myanmar"},
+  georgian:   {ocr:"kat",                                  from:"ka",    re:"Georgian"},
+  armenian:   {ocr:"hye",                                  from:"hy",    re:"Armenian"},
+  ethiopic:   {ocr:"amh+tir",                              from:"auto",  re:"Ethiopic"},
+  latinMore:  {ocr:"nld+pol+tur+ind+vie+ces+ron+swe+fin+hun+dan+cat", from:"auto", re:"Latin"}
+};
+const TRY_ORDER = Object.keys(GROUPS);
+const CODE_SCRIPT = {};   // tesseract pack -> script name(s) (manual mode)
+for (const g of Object.values(GROUPS)) for (const c of g.ocr.split("+")) if(!CODE_SCRIPT[c] || g.re!=="Latin") CODE_SCRIPT[c]=g.re;
+function scriptRe(name){ return new RegExp(name.split("|").map(n=>`\\p{Script=${n}}`).join("|"),"u"); }
+
+// ---------------------------------------------------------------- helpers
 const $ = id => document.getElementById(id);
 const video=$("video"), result=$("result"), srcSel=$("src"), dstSel=$("dst");
-let stream=null, facing="environment", busy=false;
-const workers = {};
+let stream=null, facing="environment", busy=false, base=null, blocks=[], showOverlay=true, targetCode="en";
 const cache = {};
+const sleep = ms => new Promise(r=>setTimeout(r,ms));
+function load(k,d){ try{ return localStorage.getItem(k) ?? d; }catch(e){ return d; } }
+function save(k,v){ try{ localStorage.setItem(k,v); }catch(e){} }
+function status(msg, spin=true){
+  const s=$("status");
+  if(!msg){ s.style.display="none"; return; }
+  s.innerHTML = (spin?'<span class="spin"></span>':'') + msg; s.style.display="block";
+}
+function flash(msg, ms=3500){ status(msg,false); setTimeout(()=>status(),ms); }
+const CJK = /[぀-ヿ㐀-鿿]/;      // Han + kana (no spaces between words; Korean uses spaces)
+const cjkJoin = s => s.replace(/(?<=[぀-ヿ㐀-鿿]) (?=[぀-ヿ㐀-鿿])/g,"");
 
-// ---------- language pickers ----------
+// ---------------------------------------------------------------- pickers
 srcSel.innerHTML = `<option value="auto">Auto-detect language</option>` +
   LANGS.map((l,i)=>`<option value="${i}">${l[0]}</option>`).join("");
 dstSel.innerHTML = LANGS.map((l,i)=>`<option value="${i}">${l[0]}</option>`).join("");
-
-function load(k,d){ try{ return localStorage.getItem(k) ?? d; }catch(e){ return d; } }
-function save(k,v){ try{ localStorage.setItem(k,v); }catch(e){} }
-const nav = (navigator.language||"en").split("-")[0].toLowerCase();
-const guess = LANGS.findIndex(l=>l[2].toLowerCase()===nav || l[2].toLowerCase().startsWith(nav));
+const nl = (navigator.language||"en");
+let guess = LANGS.findIndex(l=>l[2].toLowerCase()===nl.toLowerCase());
+if(guess<0) guess = LANGS.findIndex(l=>l[2].toLowerCase()===nl.split("-")[0].toLowerCase());
 srcSel.value = load("src","auto");
-dstSel.value = load("dst", String(guess>=0?guess:0));
+dstSel.value = load("dst", String(guess>=0?guess:LANGS.findIndex(l=>l[2]==="en")));
+if(!srcSel.value) srcSel.value="auto";
+if(!dstSel.value) dstSel.value=String(LANGS.findIndex(l=>l[2]==="en"));
 srcSel.onchange = ()=>save("src",srcSel.value);
 dstSel.onchange = ()=>save("dst",dstSel.value);
 $("swap").onclick = ()=>{
   if (srcSel.value==="auto") return;
-  const a=srcSel.value; srcSel.value=dstSel.value; dstSel.value=a;
-  srcSel.onchange(); dstSel.onchange();
+  const a=srcSel.value; srcSel.value=dstSel.value; dstSel.value=a; srcSel.onchange(); dstSel.onchange();
 };
 
-// ---------- camera ----------
+// ---------------------------------------------------------------- camera
 async function startCamera(){
   stopCamera();
-  if (!navigator.mediaDevices?.getUserMedia){
+  if (!navigator.mediaDevices?.getUserMedia)
     return showPerm("Your browser can't open the camera here (it needs a secure https page). You can still pick or take a photo below.");
-  }
   try{
     stream = await navigator.mediaDevices.getUserMedia({
-      video:{ facingMode:{ideal:facing}, width:{ideal:1920}, height:{ideal:1080} }, audio:false });
+      video:{ facingMode:{ideal:facing}, width:{ideal:2560}, height:{ideal:1440} }, audio:false });
     video.srcObject = stream;
+    const track = stream.getVideoTracks()[0];
+    try{ await track.applyConstraints({advanced:[{focusMode:"continuous"}]}); }catch(e){}
     $("perm").style.display="none";
     await video.play().catch(()=>{});
   }catch(e){
@@ -185,179 +226,322 @@ function showPerm(msg){ $("permMsg").textContent=msg; $("perm").style.display="f
 $("retry").onclick = startCamera;
 $("flip").onclick = ()=>{ facing = facing==="environment"?"user":"environment"; startCamera(); };
 
-// ---------- status ----------
-function status(msg, spin=true){
-  const s=$("status");
-  if(!msg){ s.style.display="none"; return; }
-  s.innerHTML = (spin?'<span class="spin"></span>':'') + msg; s.style.display="block";
-}
-
-// ---------- capture ----------
-function frameToCanvas(source, w, h){
-  const max=1800, k=Math.min(1, max/Math.max(w,h));
+function frameToCanvas(source, w, h, max=1800){
+  const k=Math.min(1, max/Math.max(w,h));
   const c=document.createElement("canvas"); c.width=Math.round(w*k); c.height=Math.round(h*k);
   c.getContext("2d").drawImage(source,0,0,c.width,c.height); return c;
 }
 $("shutter").onclick = ()=>{
   if(busy || !video.videoWidth) return;
-  process(frameToCanvas(video, video.videoWidth, video.videoHeight));
+  run(frameToCanvas(video, video.videoWidth, video.videoHeight));
 };
 async function fromFile(f){
-  if(!f) return;
+  if(!f || busy) return;
   const bmp = await createImageBitmap(f).catch(()=>null);
-  if(!bmp){ status("Couldn't read that image.",false); setTimeout(()=>status(),2000); return; }
+  if(!bmp) return flash("Couldn't read that image.");
   $("perm").style.display="none";
-  process(frameToCanvas(bmp,bmp.width,bmp.height));
+  run(frameToCanvas(bmp,bmp.width,bmp.height));
 }
 $("file").onchange = e=>{ fromFile(e.target.files[0]); e.target.value=""; };
 $("file2").onchange = e=>{ fromFile(e.target.files[0]); e.target.value=""; };
 
-// ---------- OCR ----------
+// ---------------------------------------------------------------- image prep: grayscale + contrast stretch
+function prep(src, maxSide){
+  const k = maxSide ? Math.min(1, maxSide/Math.max(src.width,src.height)) : 1;
+  const c=document.createElement("canvas"); c.width=Math.round(src.width*k); c.height=Math.round(src.height*k);
+  const x=c.getContext("2d",{willReadFrequently:true}); x.drawImage(src,0,0,c.width,c.height);
+  const img=x.getImageData(0,0,c.width,c.height), d=img.data, hist=new Uint32Array(256);
+  for(let i=0;i<d.length;i+=4){ const g=(d[i]*0.299+d[i+1]*0.587+d[i+2]*0.114)|0; d[i]=g; hist[g]++; }
+  const n=c.width*c.height; let lo=0,hi=255,acc=0;
+  for(let v=0;v<256;v++){ acc+=hist[v]; if(acc>=n*0.005){ lo=v; break; } }
+  acc=0; for(let v=255;v>=0;v--){ acc+=hist[v]; if(acc>=n*0.005){ hi=v; break; } }
+  // only stretch when the image has a wide tonal range (sparse text on a plain page must be left alone)
+  if(hi-lo>=100){
+    const span=hi-lo;
+    for(let i=0;i<d.length;i+=4){ const g=Math.max(0,Math.min(255,((d[i]-lo)*255/span)|0)); d[i]=d[i+1]=d[i+2]=g; d[i+3]=255; }
+  } else { for(let i=0;i<d.length;i+=4){ d[i+1]=d[i+2]=d[i]; d[i+3]=255; } }
+  x.putImageData(img,0,0); return c;
+}
+
+// ---------------------------------------------------------------- OCR
+let cur={code:null,w:null};
 async function getWorker(code){
-  if(!workers[code]) workers[code] = Tesseract.createWorker(code, 1, {
-    logger:m=>{ if(m.status==="recognizing text") status(`Reading text… ${Math.round(m.progress*100)}%`); else if(m.status) status("Loading language data…"); }
+  if(cur.code===code) return cur.w;
+  if(cur.w){ await cur.w.terminate().catch(()=>{}); cur={code:null,w:null}; }
+  const w = await Tesseract.createWorker(code, 1, {
+    langPath: LANG_PATH, gzip:false,
+    logger:m=>{ if(m.status==="recognizing text") status(`Reading text… ${Math.round(m.progress*100)}%`);
+                else if(/load|init/.test(m.status||"")) status("Loading language data (first time only)…"); }
   });
-  return workers[code];
+  cur={code,w}; return w;
 }
 
-let osdWorker=null;
-function meanConf(data){
-  const w=(data.words||[]).filter(x=>x.text.trim().length>0);
-  if(!w.length) return 0;
-  return w.reduce((a,x)=>a+x.confidence,0)/w.length;
-}
-async function detectScript(canvas){
-  try{
-    osdWorker = osdWorker || await Tesseract.createWorker("osd",0,{legacyCore:true,legacyLang:true});
-    const r = await osdWorker.detect(canvas);
-    return SCRIPT_TO_GROUP[r.data.script] || null;
-  }catch(e){ console.warn("script detection failed",e); return null; }
-}
-async function recognizeGroup(key, canvas){
-  const w = await getWorker(GROUPS[key].ocr);
-  const {data} = await w.recognize(canvas);
-  return {key, data, conf: meanConf(data)};
-}
-async function autoRecognize(canvas){
-  status("Detecting language…");
-  const tried = new Set();
-  let best = null;
-  const attempt = async key=>{
-    tried.add(key);
-    const r = await recognizeGroup(key, canvas);
-    if(!best || r.conf>best.conf) best=r;
-    return r;
-  };
-  const first = await detectScript(canvas);
-  if(first){ const r=await attempt(first); if(r.conf>=55) return best; }
-  for(const key of TRY_ORDER){
-    if(tried.has(key)) continue;
-    status("Trying "+key.replace("latinMore","more Latin languages")+"…");
-    const r = await attempt(key);
-    if(r.conf>=75) break;
+// is this OCR word trustworthy text in the expected script?
+function wordOk(w, re){
+  const t=(w.text||"").trim(); if(!t) return false;
+  const chars=[...t]; const good=chars.filter(ch=>/[\p{L}\p{N}]/u.test(ch)).length;
+  if(good/chars.length<0.6) return false;
+  const latin = re.source.includes("Latin");
+  if(latin){
+    if(chars.length===1) return w.confidence>=80 && /\p{L}/u.test(t);
+    return w.confidence>=62 && /\p{L}/u.test(t);
   }
-  return best;
+  if(re.test(t)) return w.confidence>=40;
+  return /^\d+$/.test(t) && w.confidence>=80;
+}
+function score(data, re){
+  let s=0,n=0; for(const w of data.words||[]) if(wordOk(w,re)&&re.test(w.text)){ s+=w.confidence; n++; }
+  return {s,n};
 }
 
-// ---------- translation (MyMemory free API) ----------
-async function translate(text, from, to){
-  const key = from+"|"+to+"|"+text;
-  if(cache[key]) return cache[key];
-  const pair = (from==="auto"?"Autodetect":from)+"|"+to;
-  const r = await fetch("https://api.mymemory.translated.net/get?q="+encodeURIComponent(text)+"&langpair="+encodeURIComponent(pair));
-  const j = await r.json();
-  let t = j?.responseData?.translatedText;
-  if(!t || /MYMEMORY WARNING|QUERY LENGTH LIMIT/i.test(t)) throw new Error(/WARNING/i.test(t||"")?"quota":"fail");
-  const tmp=document.createElement("textarea"); tmp.innerHTML=t; t=tmp.value; // decode entities
-  return cache[key]=t;
+async function pickGroup(baseCanvas){
+  const small = prep(baseCanvas, 1100);
+  let best=null; const t0=Date.now();
+  for(const key of TRY_ORDER){
+    if(Date.now()-t0>30000 && best) break;           // time cap: use best so far
+    status(`Detecting language… (${key==="latinMore"?"more Latin":key})`);
+    const w=await getWorker(GROUPS[key].ocr);
+    const {data}=await w.recognize(small);
+    const re=scriptRe(GROUPS[key].re), sc=score(data, re);
+    const mean = sc.n ? sc.s/sc.n : 0;
+    let q = mean*Math.min(sc.n,6);                    // quality: confident AND enough words
+    let sure = sc.n>=3 && mean>=85;
+    if(key==="japanese"){                             // Han-only output is Chinese, not Japanese
+      const kana=(data.words||[]).filter(x=>/[\u3040-\u30ff]/.test(x.text)&&x.confidence>=60).length;
+      if(!kana){ q*=0.85; sure=false; }
+    }
+    if(!best||q>best.q) best={key,q,n:sc.n};
+    if(sure) break;
+  }
+  return best && best.n>0 ? best.key : null;
 }
-async function pool(items, n, fn){
+
+// turn tesseract output into clean paragraph blocks
+function buildBlocks(data, re){
+  const latin = re.source.includes("Latin");
+  // 1) keep only lines that are really text in the expected script
+  const lines=[];
+  for(const l of data.lines||[]){
+    const all=(l.words||[]).filter(w=>{
+      const t=(w.text||"").trim(); if(!t) return false;
+      const ch=[...t]; return ch.filter(c=>/[\p{L}\p{N}]/u.test(c)).length/ch.length>=0.6;
+    });
+    if(!all.length) continue;
+    const ok=all.filter(w=>wordOk(w,re));
+    const mean=all.reduce((a,w)=>a+w.confidence,0)/all.length;
+    if(ok.length/all.length<0.6 || mean<(latin?68:70)) continue;
+    const text=cjkJoin(all.map(w=>w.text.trim()).join(" "));
+    if(!/\p{L}/u.test(text)) continue;
+    if(latin && text.replace(/[^\p{L}]/gu,"").length<3) continue;
+    lines.push({ text, conf:mean,
+      x0:Math.min(...all.map(w=>w.bbox.x0)), y0:Math.min(...all.map(w=>w.bbox.y0)),
+      x1:Math.max(...all.map(w=>w.bbox.x1)), y1:Math.max(...all.map(w=>w.bbox.y1)) });
+  }
+  lines.sort((a,b)=>(a.y0-b.y0)||(a.x0-b.x0));
+  // 2) group neighbouring lines of similar size and alignment into paragraphs
+  const groups=[];
+  for(const l of lines){
+    const H=l.y1-l.y0; let best=null,bd=1e9;
+    for(const g of groups){
+      const last=g.lines[g.lines.length-1], LH=last.y1-last.y0;
+      const gap=l.y0-last.y1, ratio=H/LH;
+      const overlap=Math.min(l.x1,last.x1)-Math.max(l.x0,last.x0);
+      if(gap>-0.4*LH && gap<0.9*LH && ratio>0.7 && ratio<1.4 && overlap>0 && Math.abs(l.x0-last.x0)<2.5*LH){
+        if(gap<bd){ bd=gap; best=g; }
+      }
+    }
+    if(best) best.lines.push(l); else groups.push({lines:[l]});
+  }
+  const out=groups.map(g=>{
+    const ls=g.lines;
+    return { text: cjkJoin(ls.map(l=>l.text).join(" ")).replace(/\s+/g," ").trim(),
+      x0:Math.min(...ls.map(l=>l.x0)), y0:Math.min(...ls.map(l=>l.y0)),
+      x1:Math.max(...ls.map(l=>l.x1)), y1:Math.max(...ls.map(l=>l.y1)),
+      lineH: ls.reduce((a,l)=>a+(l.y1-l.y0),0)/ls.length, n:ls.length };
+  });
+  out.sort((a,b)=>(a.y0-b.y0)||(a.x0-b.x0));
+  return out;
+}
+
+// ---------------------------------------------------------------- translation (MyMemory, free)
+function decode(t){ const e=document.createElement("textarea"); e.innerHTML=t; return e.value; }
+function chunks(text,max=450){
+  if(text.length<=max) return [text];
+  const parts=text.split(/(?<=[.!?。！？])\s*/), out=[]; let cur="";
+  for(let p of parts){
+    while(p.length>max){ if(cur){out.push(cur);cur="";} out.push(p.slice(0,max)); p=p.slice(max); }
+    if((cur+" "+p).trim().length>max){ out.push(cur); cur=p; } else cur=(cur+" "+p).trim();
+  }
+  if(cur) out.push(cur); return out;
+}
+async function mm(text, from, to){
+  if(from===to) return text;
+  const key=from+"|"+to+"|"+text; if(cache[key]) return cache[key];
+  const pair=(from==="auto"?"Autodetect":from)+"|"+to;
+  const r=await fetch("https://api.mymemory.translated.net/get?q="+encodeURIComponent(text)+"&langpair="+encodeURIComponent(pair));
+  if(!r.ok) throw new Error("fail");
+  const j=await r.json(); let t=j?.responseData?.translatedText;
+  if(!t) throw new Error("fail");
+  if(/PLEASE SELECT TWO DISTINCT LANGUAGES/i.test(t)) return cache[key]=text;     // already in the target language
+  if(/MYMEMORY WARNING|USED ALL AVAILABLE FREE/i.test(t)) throw new Error("quota");
+  if(/INVALID (SOURCE|TARGET)? ?LANGUAGE|IS AN INVALID/i.test(t)) throw new Error("fail");
+  return cache[key]=decode(t);
+}
+async function translate(text, from, to){
+  const parts=await Promise.all(chunks(text).map(c=>mm(c,from,to)));
+  return parts.join(" ");
+}
+async function pool(items,n,fn){
   const out=new Array(items.length); let i=0;
   await Promise.all(Array.from({length:n},async()=>{ while(i<items.length){ const k=i++; out[k]=await fn(items[k],k); } }));
   return out;
 }
 
-// ---------- main ----------
-async function process(canvas){
-  busy=true; $("shutter").disabled=true;
-  const sIdx = srcSel.value, d = LANGS[+dstSel.value];
-  let from = sIdx==="auto"?"auto":LANGS[+sIdx][2];
-
-  showResult(canvas);
+// ---------------------------------------------------------------- main
+async function run(baseCanvas){
+  busy=true; $("shutter").disabled=true; base=baseCanvas; blocks=[]; showOverlay=true;
+  const sIdx=srcSel.value, dst=LANGS[+dstSel.value]; targetCode=dst[2];
+  showResult(); drawBase();
+  document.body.classList.add("working");
   try{
-    let data;
+    if(typeof Tesseract==="undefined") throw new Error("noengine");
+    let code, from, re;
     if(sIdx==="auto"){
-      const r = await autoRecognize(canvas);
-      data = r.data; from = GROUPS[r.key].from;
+      const key=await pickGroup(baseCanvas);
+      if(!key){ flash("No readable text found. Move closer, hold steady and make sure the text is in focus."); return reset(); }
+      code=GROUPS[key].ocr; from=GROUPS[key].from; re=scriptRe(GROUPS[key].re);
     } else {
-      status("Loading language data…");
-      const w = await getWorker(LANGS[+sIdx][1]);
-      ({ data } = await w.recognize(canvas));
+      const l=LANGS[+sIdx]; code=l[1]; from=l[2]; re=scriptRe(CODE_SCRIPT[code]||"Latin");
     }
-    const lines = (data.lines||[]).filter(l=>l.text.trim().length>1 && l.confidence>22);
-    if(!lines.length){ status("No text found. Try getting closer or choosing the right language.",false); setTimeout(()=>status(),3000); reset(false); return; }
+    status("Reading text…");
+    const w=await getWorker(code);
+    const ready=prep(baseCanvas);
+    const {data}=await w.recognize(ready);
+    blocks=buildBlocks(data,re);
+    const size=bl=>bl.reduce((a,b)=>a+b.text.length,0);
+    if(blocks.reduce((a,b)=>a+b.n,0)<4){               // few lines found: try sparse-text layout analysis too
+      status("Reading text…");
+      await w.setParameters({tessedit_pageseg_mode:"11"});
+      const alt=buildBlocks((await w.recognize(ready)).data,re);
+      await w.setParameters({tessedit_pageseg_mode:"3"});
+      if(size(alt)>size(blocks)) blocks=alt;
+    }
+    if(!blocks.length){ flash("No readable text found. Move closer, hold steady and make sure the text is in focus."); return reset(); }
 
     status("Translating…");
-    let failed=false;
-    const tr = await pool(lines, 4, async l=>{
-      const src=l.text.replace(/\s+/g," ").replace(/(?<=[\u3040-\u30ff\u3400-\u9fff\uac00-\ud7af]) (?=[\u3040-\u30ff\u3400-\u9fff\uac00-\ud7af])/g,"").trim();
-      if(from!=="auto" && from===d[2]) return src;
-      try{ return await translate(src, from, d[2]); }catch(e){ failed=e.message; return src; }
-    });
-    drawOverlay(canvas, lines, tr);
-    $("text").textContent = tr.join("\n");
-    $("sheet").style.display="block";
-    status(failed==="quota" ? "Free daily translation limit reached. Try again later." : failed ? "Some lines couldn't be translated (check your connection)." : "", false);
-    if(failed) setTimeout(()=>status(),3500);
+    let err=null;
+    const tr=await pool(blocks,3,async b=>{ try{ return await translate(b.text,from,dst[2]); }catch(e){ err=e.message; return null; } });
+    blocks.forEach((b,i)=>b.tr=tr[i]);
+    blocks=blocks.filter(b=>b.tr);
+    if(!blocks.length){ flash(err==="quota"?"The free translation limit for today has been reached. Please try again later.":"Couldn't reach the translation service. Check your connection."); return reset(); }
+    document.body.classList.remove("working");
+    $("sheet").style.display="block"; $("sheetbar").style.display="flex";
+    await sleep(30);
+    render(true);
+    status(err==="quota"?"Daily free limit reached – some text is untranslated.":"",false);
+    if(err) setTimeout(()=>status(),3500);
   }catch(e){
     console.error(e);
-    status("Something went wrong. Check your connection and try again.",false);
-    setTimeout(()=>status(),3000); reset(false);
-  }
-  busy=false;
+    flash(e.message==="noengine"?"The text engine couldn't load. Check your connection and reload."
+      :"Couldn't download the language data. Check your connection and try again.");
+    return reset();
+  }finally{ busy=false; }
 }
 
-function showResult(c){
-  result.width=c.width; result.height=c.height;
-  result.getContext("2d").drawImage(c,0,0);
-  result.style.display="block"; video.style.display="none";
-  $("controls").style.display="none";
+function showResult(){
+  document.body.classList.add("showing");
+  video.style.display="none"; $("controls").style.display="none"; $("hint").style.display="none";
 }
 function reset(){
-  result.style.display="none"; video.style.display="block";
-  $("sheet").style.display="none"; $("controls").style.display="flex";
-  $("shutter").disabled=false; busy=false;
+  document.body.classList.remove("showing","working");
+  video.style.display="block"; $("controls").style.display="flex"; $("hint").style.display="block";
+  $("sheet").style.display="none"; $("sheetbar").style.display="none";
+  $("shutter").disabled=false; busy=false; base=null;
   if(!stream) startCamera();
 }
 $("again").onclick = ()=>{ status(); reset(); };
 $("copy").onclick = async ()=>{
-  try{ await navigator.clipboard.writeText($("text").textContent); $("copy").textContent="Copied ✓"; }
-  catch(e){ $("copy").textContent="Select & copy manually"; }
+  try{ await navigator.clipboard.writeText(blocks.map(b=>b.tr).join("\n\n")); $("copy").textContent="Copied ✓"; }
+  catch(e){ $("copy").textContent="Select text to copy"; }
   setTimeout(()=>$("copy").textContent="Copy",1500);
 };
+result.onclick = ()=>{ if(!base||busy||!blocks.length) return; showOverlay=!showOverlay; render(false); };
 
-function drawOverlay(canvas, lines, tr){
-  const ctx = result.getContext("2d");
-  ctx.drawImage(canvas,0,0);
-  ctx.textBaseline="top";
-  lines.forEach((l,i)=>{
-    const {x0,y0,x1,y1}=l.bbox, w=Math.max(x1-x0,40), h=y1-y0;
-    let size=Math.max(12, Math.min(h*0.85, 56));
-    const text=tr[i];
-    ctx.font=`600 ${size}px system-ui,sans-serif`;
-    // wrap
-    const wrap=(s)=>{ const words=s.split(/(\s+)/), out=[]; let cur="";
-      for(const wd of words){ if(ctx.measureText(cur+wd).width>w-8 && cur){ out.push(cur.trim()); cur=wd.trimStart(); } else cur+=wd; }
-      if(cur.trim()) out.push(cur.trim()); return out; };
-    let rows=wrap(text);
-    while(rows.length*size*1.15>Math.max(h,size)*2.2 && size>12){ size-=1; ctx.font=`600 ${size}px system-ui,sans-serif`; rows=wrap(text); }
-    const bh=rows.length*size*1.15+8;
-    ctx.fillStyle="rgba(0,0,0,.96)"; ctx.fillRect(x0-2,y0-2,w+4,Math.max(bh,h+4));
-    ctx.fillStyle="#fff";
-    rows.forEach((r,k)=>ctx.fillText(r,x0+4,y0+2+k*size*1.15,w-6));
+// ---------------------------------------------------------------- drawing
+function drawBase(){
+  result.width=base.width; result.height=base.height;
+  result.getContext("2d").drawImage(base,0,0);
+}
+function bgColor(ctx,b){
+  const pts=[]; const W=ctx.canvas.width,H=ctx.canvas.height;
+  for(let i=0;i<=6;i++){ const x=b.x0+(b.x1-b.x0)*i/6; pts.push([x,b.y0-3],[x,b.y1+3]); }
+  for(let i=0;i<=3;i++){ const y=b.y0+(b.y1-b.y0)*i/3; pts.push([b.x0-3,y],[b.x1+3,y]); }
+  let r=0,g=0,bl=0,n=0;
+  for(const [x,y] of pts){ if(x<0||y<0||x>=W||y>=H) continue; const d=ctx.getImageData(x|0,y|0,1,1).data; r+=d[0];g+=d[1];bl+=d[2];n++; }
+  if(!n) return [30,30,30]; return [r/n|0,g/n|0,bl/n|0];
+}
+function wrap(ctx,text,maxW){
+  const toks = CJK.test(text) ? [...text] : text.split(/(?<=\s)/);
+  const lines=[]; let cur="";
+  for(const t of toks){
+    if(ctx.measureText(cur+t).width>maxW && cur){ lines.push(cur.trimEnd()); cur=t.trimStart(); } else cur+=t;
+  }
+  if(cur.trim()) lines.push(cur.trimEnd());
+  return lines;
+}
+function rrect(ctx,x,y,w,h,r){ ctx.beginPath(); ctx.moveTo(x+r,y); ctx.arcTo(x+w,y,x+w,y+h,r); ctx.arcTo(x+w,y+h,x,y+h,r);
+  ctx.arcTo(x,y+h,x,y,r); ctx.arcTo(x,y,x+w,y,r); ctx.closePath(); }
+
+function render(rebuildList){
+  const ctx=result.getContext("2d");
+  ctx.drawImage(base,0,0);
+  const rect=result.getBoundingClientRect();
+  const scale=Math.min(rect.width/result.width, rect.height/result.height)||1;
+  const minF=11/scale, maxF=34/scale, rtl=RTL.has(targetCode);
+  let badge=0;
+  if(showOverlay) blocks.forEach(b=>{
+    const pad=Math.max(4,b.lineH*0.18);
+    const x=b.x0-pad, y=b.y0-pad, w=Math.max(b.x1-b.x0+pad*2, 90/scale), h=(b.y1-b.y0)+pad*2;
+    let size=Math.min(b.lineH*0.92,maxF), lines=null;
+    for(; size>=minF; size*=0.93){
+      ctx.font=`600 ${size}px system-ui,-apple-system,sans-serif`;
+      const ls=wrap(ctx,b.tr,w-pad*2);
+      if(ls.length*size*1.18<=h*1.12){ lines=ls; break; }
+    }
+    b.num=0;
+    if(lines){
+      const [r,g,bl]=bgColor(ctx,b), lum=(r*299+g*587+bl*114)/1000;
+      const th=lines.length*size*1.18;
+      ctx.fillStyle=`rgba(${r},${g},${bl},.96)`; rrect(ctx,x,y,w,Math.max(h,th+pad),pad*0.8); ctx.fill();
+      ctx.fillStyle=lum>140?"#111":"#fff"; ctx.textBaseline="top";
+      ctx.direction=rtl?"rtl":"ltr"; ctx.textAlign=rtl?"right":"left";
+      const ty=y+Math.max(pad/2,(Math.max(h,th)-th)/2);
+      lines.forEach((ln,k)=>ctx.fillText(ln, rtl?x+w-pad:x+pad, ty+k*size*1.18, w-pad*2));
+      ctx.direction="ltr"; ctx.textAlign="left";
+    } else {
+      b.num=++badge;
+      ctx.strokeStyle="rgba(74,222,128,.9)"; ctx.lineWidth=2/scale; rrect(ctx,x,y,w,h,pad*0.8); ctx.stroke();
+      const rad=11/scale, cx=Math.max(rad,x), cy=Math.max(rad,y);
+      ctx.fillStyle="#4ade80"; ctx.beginPath(); ctx.arc(cx,cy,rad,0,7); ctx.fill();
+      ctx.fillStyle="#04210f"; ctx.font=`700 ${rad*1.2}px system-ui,sans-serif`; ctx.textAlign="center"; ctx.textBaseline="middle";
+      ctx.fillText(String(badge),cx,cy+rad*0.05); ctx.textAlign="left";
+    }
   });
+  if(rebuildList){
+    const list=$("list"); list.innerHTML="";
+    blocks.forEach(b=>{
+      const d=document.createElement("div"); d.className="item";
+      if(b.num){ const n=document.createElement("div"); n.className="num"; n.textContent=b.num; d.appendChild(n); }
+      const c=document.createElement("div"), t=document.createElement("div"), o=document.createElement("div");
+      t.className="tr"; t.textContent=b.tr; if(rtl) t.dir="rtl";
+      o.className="orig"; o.textContent=b.text; c.append(t,o); d.appendChild(c); list.appendChild(d);
+    });
+  }
 }
 
+if("serviceWorker" in navigator && (location.protocol==="https:" || location.hostname==="localhost")){
+  navigator.serviceWorker.register("sw.js").catch(()=>{});
+}
 startCamera();
 </script>
 </body>

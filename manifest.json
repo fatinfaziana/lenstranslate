@@ -1,0 +1,9 @@
+{
+  "name": "LensTranslate",
+  "short_name": "LensTranslate",
+  "description": "Translate anything with your phone camera.",
+  "start_url": "./",
+  "display": "standalone",
+  "background_color": "#000000",
+  "theme_color": "#000000"
+}
